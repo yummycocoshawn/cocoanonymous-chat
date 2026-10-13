@@ -30,7 +30,7 @@ export function renderChat({ service, session, onLeave }) {
   const log = h(
     'div',
     { class: 'log', 'aria-live': 'polite', 'aria-label': '聊天訊息', tabindex: '0' },
-    h('p', { class: 'retention' }, '訊息只保留最近的 200 則'),
+    h('p', { class: 'retention' }, '訊息只保留最近的 200 則，所有人離開後會自動清空'),
     empty,
   );
   const jump = h('button', { type: 'button', class: 'jump', hidden: true, onClick: () => scrollToBottom() }, '有新訊息 ↓');

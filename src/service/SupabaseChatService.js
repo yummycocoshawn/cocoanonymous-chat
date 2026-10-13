@@ -11,6 +11,7 @@ const RECENT = 50; // 新人進來看到最近 50 則
 const SYNC_WAIT_MS = 2000;
 const RIVAL_WAIT_MS = 600;
 const DUPLICATE_KEY = '23505';
+const HEARTBEAT_MS = 20000; // 向資料庫報到的間隔；所有人都停止報到後，資料庫會清空聊天室
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -95,6 +96,8 @@ export class SupabaseChatService extends ChatService {
       throw err instanceof ChatError ? err : new ChatError('failed');
     }
 
+    await this.#beat();
+    this.heartbeat = setInterval(() => this.#beat(), HEARTBEAT_MS);
     await this.#insertNotice(`join-${this.tabId}-${this.me.joinedAt}`, `${check.nickname} 加入了聊天室`);
 
     const { data, error } = await this.client
@@ -190,6 +193,8 @@ export class SupabaseChatService extends ChatService {
     this.channel = null;
     this.me = null;
     this.down = false;
+    clearInterval(this.heartbeat);
+    this.heartbeat = null;
     if (!channel) return;
     try {
       await channel.untrack();
@@ -224,6 +229,15 @@ export class SupabaseChatService extends ChatService {
     for (const p of leftPresences) {
       if (p.tabId === this.tabId || !p.nickname) continue;
       await this.#insertNotice(`leave-${p.tabId}-${p.joinedAt}`, `${p.nickname} 離開了聊天室`);
+    }
+  }
+
+  // 告訴資料庫「我還在線上」。失敗不影響聊天（例如剛好斷線），下一次再報
+  async #beat() {
+    try {
+      await this.client.rpc('heartbeat', { p_session: this.tabId });
+    } catch {
+      /* 忽略 */
     }
   }
 
