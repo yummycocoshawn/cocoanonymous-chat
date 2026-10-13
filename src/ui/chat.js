@@ -38,7 +38,6 @@ export function renderChat({ service, session, onLeave }) {
   const textarea = h('textarea', {
     class: 'composer-input',
     rows: '1',
-    maxlength: String(MESSAGE_MAX),
     placeholder: '輸入訊息',
     'aria-label': '輸入訊息',
   });
@@ -154,7 +153,10 @@ export function renderChat({ service, session, onLeave }) {
   }
 
   function updateComposer() {
-    const length = Array.from(textarea.value).length;
+    // 用「字」而不是 UTF-16 長度計算，emoji 才不會被多算成兩個字
+    const chars = Array.from(textarea.value);
+    if (chars.length > MESSAGE_MAX) textarea.value = chars.slice(0, MESSAGE_MAX).join('');
+    const length = Math.min(chars.length, MESSAGE_MAX);
     counter.textContent = `${length} / ${MESSAGE_MAX}`;
     counter.classList.toggle('counter-warn', MESSAGE_MAX - length < 50);
     sendBtn.disabled = !connected || textarea.value.trim().length === 0;

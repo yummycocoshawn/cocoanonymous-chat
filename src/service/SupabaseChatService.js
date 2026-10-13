@@ -11,6 +11,7 @@ const RECENT = 50; // 新人進來看到最近 50 則
 const SYNC_WAIT_MS = 2000;
 const RIVAL_WAIT_MS = 600;
 const DUPLICATE_KEY = '23505';
+const LEAVE_GRACE_MS = 30000; // 對方離開後，等 30 秒沒回來才顯示「離開了聊天室」
 const HEARTBEAT_MS = 20000; // 向資料庫報到的間隔；所有人都停止報到後，資料庫會清空聊天室
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -223,13 +224,22 @@ export class SupabaseChatService extends ChatService {
     return list.sort((a, b) => a.joinedAt - b.joinedAt).map(({ nickname, self }) => ({ nickname, self }));
   }
 
-  // 有人離開（按離開、關掉網頁、或斷線太久）：留下一則提示
-  async #onLeave(leftPresences) {
+  // 有人離開（按離開、關掉網頁、或斷線）：先等一段時間，
+  // 如果對方在寬限期內回來（網路短暫中斷、重新整理），就不顯示離開提示
+  #onLeave(leftPresences) {
     if (!this.me) return;
     for (const p of leftPresences) {
       if (p.tabId === this.tabId || !p.nickname) continue;
-      await this.#insertNotice(`leave-${p.tabId}-${p.joinedAt}`, `${p.nickname} 離開了聊天室`);
+      setTimeout(() => this.#confirmLeave(p), LEAVE_GRACE_MS);
     }
+  }
+
+  async #confirmLeave(p) {
+    if (!this.me) return;
+    const back =
+      this.me.nkey === p.nkey || this.#others().some((o) => o.tabId === p.tabId || o.nkey === p.nkey);
+    if (back) return;
+    await this.#insertNotice(`leave-${p.tabId}-${p.joinedAt}`, `${p.nickname} 離開了聊天室`);
   }
 
   // 告訴資料庫「我還在線上」。失敗不影響聊天（例如剛好斷線），下一次再報
