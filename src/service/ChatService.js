@@ -7,6 +7,8 @@
 //   onMessage(fn)    收到訊息或進出提示時通知畫面
 //   onPresence(fn)   線上名單變化時通知畫面（收到完整名單）
 //   onStatus(fn)     連線狀態變化：'connected' | 'disconnected'
+//   typing()         告訴其他人「我正在輸入」
+//   onTyping(fn)     別人正在輸入時通知畫面（收到對方的代號）
 //
 // 訊息格式：
 //   { id, type: 'message', nickname, content, createdAt }
@@ -21,7 +23,7 @@ export class ChatError extends Error {
 }
 
 export class ChatService {
-  #handlers = { message: new Set(), presence: new Set(), status: new Set() };
+  #handlers = { message: new Set(), presence: new Set(), status: new Set(), typing: new Set() };
 
   onMessage(fn) {
     return this.#subscribe('message', fn);
@@ -32,6 +34,13 @@ export class ChatService {
   onStatus(fn) {
     return this.#subscribe('status', fn);
   }
+
+  onTyping(fn) {
+    return this.#subscribe('typing', fn);
+  }
+
+  // 告訴其他人「我正在輸入」。沒有這個功能的後端什麼都不用做。
+  typing() {}
 
   #subscribe(type, fn) {
     this.#handlers[type].add(fn);

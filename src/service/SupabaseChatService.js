@@ -70,6 +70,14 @@ export class SupabaseChatService extends ChatService {
       if (this.me) this._emit('presence', this.#users());
     });
     channel.on('presence', { event: 'leave' }, ({ leftPresences }) => this.#onLeave(leftPresences));
+    // 「正在輸入」：不存資料庫，只是即時廣播給其他人
+    channel.on('broadcast', { event: 'typing' }, ({ payload }) => {
+      if (payload?.tabId !== this.tabId && payload?.nickname) this._emit('typing', payload.nickname);
+    });
+    // 正常離開（按「離開」或關掉網頁）會先廣播一聲，大家立刻顯示離開提示，不用等 30 秒
+    channel.on('broadcast', { event: 'bye' }, ({ payload }) => {
+      if (this.me && payload?.tabId !== this.tabId && payload?.nickname) this.#announceLeave(payload);
+    });
     channel.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, ({ new: row }) =>
       this.#receive(row),
     );
@@ -132,8 +140,18 @@ export class SupabaseChatService extends ChatService {
       .insert({ type: 'message', nickname: this.me.nickname, content })
       .select()
       .single();
-    if (error) throw new ChatError('failed');
+    if (error) throw new ChatError(/rate_limited/.test(error.message) ? 'rate-limited' : 'failed');
     this.#receive(data);
+  }
+
+  // 告訴其他人「我正在輸入」（畫面端自己控制不要太頻繁）
+  typing() {
+    if (!this.me || !this.channel || this.down) return;
+    this.channel.send({
+      type: 'broadcast',
+      event: 'typing',
+      payload: { tabId: this.tabId, nickname: this.me.nickname },
+    });
   }
 
   // ---- 內部 ----
@@ -191,8 +209,23 @@ export class SupabaseChatService extends ChatService {
 
   async #teardown() {
     const channel = this.channel;
+    const me = this.me;
     this.channel = null;
     this.me = null;
+    if (channel && me) {
+      try {
+        await Promise.race([
+          channel.send({
+            type: 'broadcast',
+            event: 'bye',
+            payload: { tabId: me.tabId, nickname: me.nickname, joinedAt: me.joinedAt },
+          }),
+          sleep(1000),
+        ]);
+      } catch {
+        /* 送不出去就等 30 秒的寬限，一樣會顯示離開提示 */
+      }
+    }
     this.down = false;
     clearInterval(this.heartbeat);
     this.heartbeat = null;
@@ -239,7 +272,12 @@ export class SupabaseChatService extends ChatService {
     const back =
       this.me.nkey === p.nkey || this.#others().some((o) => o.tabId === p.tabId || o.nkey === p.nkey);
     if (back) return;
-    await this.#insertNotice(`leave-${p.tabId}-${p.joinedAt}`, `${p.nickname} 離開了聊天室`);
+    await this.#announceLeave(p);
+  }
+
+  // 同一個人離開，每個人算出來的提示編號都一樣，資料庫只會留下一則
+  #announceLeave(p) {
+    return this.#insertNotice(`leave-${p.tabId}-${p.joinedAt}`, `${p.nickname} 離開了聊天室`);
   }
 
   // 告訴資料庫「我還在線上」。失敗不影響聊天（例如剛好斷線），下一次再報

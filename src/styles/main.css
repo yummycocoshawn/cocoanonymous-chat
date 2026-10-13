@@ -21,8 +21,9 @@
   --bar-h: 52px;
 }
 
+/* 深色：跟隨系統（除非手動選了淺色），或手動選了深色 */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
     --primary: #c2417a;
     --secondary: #e0783a;
     --bg: #14110f;
@@ -34,7 +35,27 @@
     --line: #34302d;
     --nick-s: 70%;
     --nick-l: 72%;
+    color-scheme: dark;
   }
+}
+
+:root[data-theme='dark'] {
+  --primary: #c2417a;
+  --secondary: #e0783a;
+  --bg: #14110f;
+  --panel: #1e1a18;
+  --bubble-other: #2a2523;
+  --text: #eeeeee;
+  --text-muted: #a8a29e;
+  --error: #f2b8b5;
+  --line: #34302d;
+  --nick-s: 70%;
+  --nick-l: 72%;
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
 }
 
 *,
@@ -173,6 +194,28 @@ button {
   margin-right: auto;
   font-size: 18px;
   font-weight: 700;
+}
+.btn-theme {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 1px solid rgb(255 255 255 / 0.55);
+  border-radius: var(--radius-control);
+  font-size: 18px;
+  line-height: 1;
+}
+.typing {
+  flex: none;
+  min-height: 22px;
+  margin: 0;
+  padding: 0 16px 2px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.typing-error {
+  color: var(--error);
 }
 .who,
 .btn-leave {

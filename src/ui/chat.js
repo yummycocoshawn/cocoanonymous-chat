@@ -1,7 +1,11 @@
 import { h, nicknameHue, formatTime, dayKey, formatDay } from './dom.js';
 import { MESSAGE_MAX } from '../nickname.js';
+import { getTheme, nextTheme, THEME_LABELS } from './theme.js';
 
 const COARSE_POINTER = window.matchMedia('(pointer: coarse)');
+const TITLE = '匿名聊天室';
+const TYPING_SEND_MS = 2000; // 自己輸入時，最多每 2 秒通知一次
+const TYPING_SHOW_MS = 4000; // 對方停止輸入 4 秒後，「正在輸入」就消失
 
 export function renderChat({ service, session, onLeave }) {
   const me = session.nickname;
@@ -19,7 +23,19 @@ export function renderChat({ service, session, onLeave }) {
     whoCount,
     ' 人在線',
   );
-  const leaveBtn = h('button', { type: 'button', class: 'btn-leave', onClick: onLeave }, '離開');
+  const leaveBtn = h(
+    'button',
+    {
+      type: 'button',
+      class: 'btn-leave',
+      onClick: () => {
+        cleanup();
+        onLeave();
+      },
+    },
+    '離開',
+  );
+  const themeBtn = h('button', { type: 'button', class: 'btn-theme', onClick: onThemeClick });
   const status = h('div', { class: 'status', role: 'status', hidden: true }, '連線中斷，重新連線中…');
 
   const rosterList = h('ul', { class: 'roster-list' });
@@ -34,6 +50,8 @@ export function renderChat({ service, session, onLeave }) {
     empty,
   );
   const jump = h('button', { type: 'button', class: 'jump', hidden: true, onClick: () => scrollToBottom() }, '有新訊息 ↓');
+
+  const typingRow = h('p', { class: 'typing', 'aria-live': 'polite' });
 
   const textarea = h('textarea', {
     class: 'composer-input',
@@ -53,10 +71,71 @@ export function renderChat({ service, session, onLeave }) {
   const root = h(
     'div',
     { class: 'chat', 'data-roster': 'closed' },
-    h('header', { class: 'bar' }, h('h1', { class: 'bar-title' }, '匿名聊天室'), whoBtn, leaveBtn),
+    h('header', { class: 'bar' }, h('h1', { class: 'bar-title' }, TITLE), whoBtn, themeBtn, leaveBtn),
     status,
-    h('div', { class: 'body' }, h('main', { class: 'main' }, log, jump, composer), roster),
+    h('div', { class: 'body' }, h('main', { class: 'main' }, log, jump, typingRow, composer), roster),
   );
+
+  // ---- 主題切換（只影響自己的畫面）----
+  function renderTheme() {
+    const { icon, text } = THEME_LABELS[getTheme()];
+    themeBtn.textContent = icon;
+    themeBtn.setAttribute('aria-label', `${text}（點一下切換）`);
+    themeBtn.title = text;
+  }
+  function onThemeClick() {
+    nextTheme();
+    renderTheme();
+  }
+  renderTheme();
+
+  // ---- 分頁標題的未讀數（只影響自己的畫面）----
+  let unread = 0;
+  function renderTitle() {
+    document.title = unread > 0 ? `(${unread}) ${TITLE}` : TITLE;
+  }
+  function onVisibility() {
+    if (!document.hidden) {
+      unread = 0;
+      renderTitle();
+    }
+  }
+  document.addEventListener('visibilitychange', onVisibility);
+
+  function cleanup() {
+    document.removeEventListener('visibilitychange', onVisibility);
+    clearInterval(typingTimer);
+    unread = 0;
+    renderTitle();
+  }
+
+  // ---- 「正在輸入」（會即時同步給所有人）----
+  const typers = new Map(); // 代號 -> 到期時間
+  let typingTimer = null;
+  let lastTypingSent = 0;
+
+  function renderTyping() {
+    const now = Date.now();
+    for (const [nick, until] of typers) if (until <= now) typers.delete(nick);
+    const names = [...typers.keys()];
+    typingRow.classList.remove('typing-error');
+    typingRow.textContent =
+      names.length === 0 ? '' : names.length > 2 ? '多人正在輸入…' : `${names.join('、')} 正在輸入…`;
+    if (names.length === 0) {
+      clearInterval(typingTimer);
+      typingTimer = null;
+    }
+  }
+  function onTyping(nickname) {
+    typers.set(nickname, Date.now() + TYPING_SHOW_MS);
+    renderTyping();
+    if (!typingTimer) typingTimer = setInterval(renderTyping, 1000);
+  }
+  function showHint(text) {
+    typingRow.classList.add('typing-error');
+    typingRow.textContent = text;
+    setTimeout(renderTyping, 3000);
+  }
 
   // ---- 線上名單 ----
   function renderRoster(users) {
@@ -135,6 +214,14 @@ export function renderChat({ service, session, onLeave }) {
     const stick = nearBottom();
     const added = appendItem(msg);
     if (!added) return;
+    if (msg.type === 'message' && msg.nickname !== me) {
+      // 對方送出訊息，「正在輸入」就不用顯示了；分頁在背景時累計未讀數
+      if (typers.delete(msg.nickname)) renderTyping();
+      if (document.hidden) {
+        unread += 1;
+        renderTitle();
+      }
+    }
     if (msg.type === 'message' && msg.nickname === me) scrollToBottom();
     else if (stick) scrollToBottom();
     else if (msg.type === 'message') jump.hidden = false;
@@ -171,13 +258,21 @@ export function renderChat({ service, session, onLeave }) {
       await service.send(text);
       textarea.value = '';
       updateComposer();
-    } catch {
+    } catch (err) {
       // 送不出去時保留已打的字
+      if (err?.code === 'rate-limited') showHint('送太快了，請稍等幾秒再送');
     }
     textarea.focus();
   }
 
-  textarea.addEventListener('input', updateComposer);
+  textarea.addEventListener('input', () => {
+    updateComposer();
+    const now = Date.now();
+    if (textarea.value.trim() && now - lastTypingSent > TYPING_SEND_MS) {
+      lastTypingSent = now;
+      service.typing();
+    }
+  });
   textarea.addEventListener('keydown', (e) => {
     // 電腦：Enter 送出、Shift+Enter 換行。手機：Enter 換行，用送出按鈕。
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !COARSE_POINTER.matches) {
@@ -196,9 +291,17 @@ export function renderChat({ service, session, onLeave }) {
   }
 
   // ---- 啟動 ----
-  service.onMessage(onIncoming);
-  service.onPresence(renderRoster);
-  service.onStatus((s) => setConnected(s === 'connected'));
+  const unsubscribe = [
+    service.onMessage(onIncoming),
+    service.onPresence(renderRoster),
+    service.onStatus((s) => setConnected(s === 'connected')),
+    service.onTyping(onTyping),
+  ];
+  const stopListening = cleanup;
+  cleanup = () => {
+    unsubscribe.forEach((off) => off());
+    stopListening();
+  };
 
   renderRoster(session.users);
   for (const msg of session.history) appendItem(msg);
